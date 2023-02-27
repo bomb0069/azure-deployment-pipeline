@@ -1,0 +1,160 @@
+trigger: none
+
+resources:
+  pipelines:
+    - pipeline: XXXXX-deploy-config
+      source: XXXXX-infra-build-pipeline
+      trigger: true
+    - pipeline: backend
+      source: XXXXXXXXXXX
+      trigger: true
+
+variables:
+  production_terrafrom_service_connection_name: ""
+  production_terrafrom_aws_bucket: ""
+  production_aws_service_connection_credentials: ""
+  production_aws_service_connection_region: ""
+
+pool:
+  vmImage: ubuntu-latest
+
+lockBehavior: runLatest
+
+stages:
+  - stage: preparation_variable
+    pool:
+      vmImage: "ubuntu-20.04"
+    jobs:
+      - job: setup_online_app_version
+        displayName: Setup version for online web application environment properties
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - template: pipeline-templates/setup-app-version-steps.yml
+            parameters:
+              pipeline_name: backend
+              artifact_name: backend_app
+              step_name: backend
+
+  - stage: dev
+    dependsOn: [preparation_variable]
+    pool:
+      vmImage: "ubuntu-20.04"
+    variables:
+      ENVIRONMENT_NAME: "dev"
+      BACKEND_VERSION: $[stageDependencies.preparation_variable.setup_online_app_version.outputs['backend.version']]
+    jobs:
+      - deployment: deploy_backend_application
+        displayName: deploy backend app to ecs cluster for ${{ variables.ENVIRONMENT_NAME }}
+        pool:
+          vmImage: ubuntu-latest
+        environment: ${{ variables.ENVIRONMENT_NAME }}
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - template: pipeline-templates/provision-app.yml
+                  parameters:
+                    service: backend
+                    version: $(BACKEND_VERSION)
+                    environment: ${{ variables.ENVIRONMENT_NAME }}
+
+  - stage: sit
+    dependsOn: [preparation_variable, dev]
+    pool:
+      vmImage: "ubuntu-20.04"
+    variables:
+      ENVIRONMENT_NAME: "sit"
+      BACKEND_VERSION: $[stageDependencies.preparation_variable.setup_online_app_version.outputs['backend.version']]
+    jobs:
+      - deployment: deploy_backend_application
+        displayName: deploy backend app to ecs cluster for ${{ variables.ENVIRONMENT_NAME }}
+        pool:
+          vmImage: ubuntu-latest
+        environment: ${{ variables.ENVIRONMENT_NAME }}
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - template: pipeline-templates/provision-app.yml
+                  parameters:
+                    service: backend
+                    version: $(BACKEND_VERSION)
+                    environment: ${{ variables.ENVIRONMENT_NAME }}
+
+  - stage: performance
+    dependsOn: [preparation_variable, sit]
+    pool:
+      vmImage: "ubuntu-20.04"
+    variables:
+      ENVIRONMENT_NAME: "perf"
+      BACKEND_VERSION: $[stageDependencies.preparation_variable.setup_online_app_version.outputs['backend.version']]
+    jobs:
+      - deployment: deploy_backend_application
+        displayName: deploy backend app to ecs cluster for ${{ variables.ENVIRONMENT_NAME }}
+        pool:
+          vmImage: ubuntu-latest
+        environment: ${{ variables.ENVIRONMENT_NAME }}
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - template: pipeline-templates/provision-app.yml
+                  parameters:
+                    service: backend
+                    version: $(BACKEND_VERSION)
+                    environment: ${{ variables.ENVIRONMENT_NAME }}
+
+  - stage: uat
+    dependsOn: [preparation_variable, sit]
+    pool:
+      vmImage: "ubuntu-20.04"
+    variables:
+      ENVIRONMENT_NAME: "uat"
+      BACKEND_VERSION: $[stageDependencies.preparation_variable.setup_online_app_version.outputs['backend.version']]
+    jobs:
+      - deployment: deploy_backend_application
+        displayName: deploy backend app to ecs cluster for ${{ variables.ENVIRONMENT_NAME }}
+        pool:
+          vmImage: ubuntu-latest
+        environment: ${{ variables.ENVIRONMENT_NAME }}
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - template: pipeline-templates/provision-app.yml
+                  parameters:
+                    service: backend
+                    version: $(BACKEND_VERSION)
+                    environment: ${{ variables.ENVIRONMENT_NAME }}
+
+  - stage: production
+    dependsOn: [preparation_variable, uat]
+    pool:
+      vmImage: "ubuntu-20.04"
+    variables:
+      ENVIRONMENT_NAME: "prd"
+      BACKEND_VERSION: $[stageDependencies.preparation_variable.setup_online_app_version.outputs['backend.version']]
+    jobs:
+      - deployment: deploy_backend_application
+        displayName: deploy backend app and execute api testing for ${{ variables.ENVIRONMENT_NAME }}
+        pool:
+          vmImage: ubuntu-latest
+        environment: ${{ variables.ENVIRONMENT_NAME }}
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - template: pipeline-templates/provision-app.yml
+                  parameters:
+                    service: backend
+                    version: $(BACKEND_VERSION)
+                    environment: ${{ variables.ENVIRONMENT_NAME }}
+                    environment_type: prod
+                    service_connection:
+                      terraform:
+                        name: ${{ variables.production_terrafrom_service_connection_name }}
+                        bucket: ${{ variables.production_terrafrom_aws_bucket }}
+                      aws:
+                        credentials: ${{ variables.production_aws_service_connection_credentials }}
+                        region: ${{ variables.production_aws_service_connection_region }}

@@ -1,0 +1,16 @@
+parameters:
+  pipeline_name: "backend"
+  artifact_name: "backend_app"
+  step_name: "backend"
+
+steps:
+  - download: ${{ parameters.pipeline_name }}
+    artifact: ${{ parameters.artifact_name }}
+    displayName: download ${{ parameters.pipeline_name }} artifact to get version
+  - bash: cat buildVersion
+    displayName: "show ${{ parameters.pipeline_name }} version"
+    workingDirectory: "$(Agent.BuildDirectory)/${{ parameters.pipeline_name }}/${{ parameters.artifact_name }}"
+  - bash: echo "##vso[task.setvariable variable=version;isoutput=true]$(cat buildVersion)"
+    displayName: "get ${{ parameters.artifact_name }} version from ${{ parameters.pipeline_name }} Pipeline"
+    workingDirectory: "$(Agent.BuildDirectory)/${{ parameters.pipeline_name }}/${{ parameters.artifact_name }}"
+    name: ${{ parameters.step_name }}

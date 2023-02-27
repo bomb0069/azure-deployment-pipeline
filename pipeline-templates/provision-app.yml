@@ -1,0 +1,115 @@
+# Starter pipeline
+# Start with a minimal pipeline that you can customize to build and deploy your code.
+# Add steps that build, run tests, deploy, and more:
+# https://aka.ms/yaml
+
+parameters:
+  - name: service
+    type: string
+    default: ""
+  - name: version
+    type: string
+    default: ""
+  - name: environment
+    type: string
+    default: local
+    values:
+      - local
+      - dev
+      - sit
+      - perf
+      - performance
+      - uat
+      - prd
+  - name: environment_type
+    type: string
+    default: "nonprod"
+  - name: system
+    type: string
+    default: gtp
+  - name: service_connection
+    type: object
+    default:
+      terraform:
+        name: "terraform for aws gtp-nonprd"
+        bucket: "tfstate-gtp-nonprod-h85t9r"
+      aws:
+        credentials: "aws-gtp-nonprd"
+        region: "ap-southeast-1"
+
+steps:
+  - bash: |
+      if [ -z "$SERVICE" ]; then
+        echo "##vso[task.logissue type=error;]Missing template parameter \"service\""
+        echo "##vso[task.complete result=Failed;]"
+      fi
+      if [ -z "$VERSION" ]; then
+        echo "##vso[task.logissue type=error;]Missing template parameter \"version\""
+        echo "##vso[task.complete result=Failed;]"
+      fi
+    env:
+      SERVICE: ${{ parameters.service }}
+      VERSION: ${{ parameters.version }}
+    displayName: Check for required parameters
+  - download: ${{ parameters.service }}-deploy-config
+    artifact: ${{ parameters.service }}-infra
+    displayName: download ${{ parameters.service }}-deploy-config for ${{ parameters.service }}-infra
+  - task: Bash@3
+    inputs:
+      targetType: "inline"
+      script: |
+        # Write your commands here
+
+        pwd
+
+        ls -lt
+      workingDirectory: "$(Agent.BuildDirectory)"
+  - task: ms-devlabs.custom-terraform-tasks.custom-terraform-installer-task.TerraformInstaller@0
+    inputs:
+      terraformVersion: "latest"
+
+  - task: TerraformTaskV3@3
+    displayName: terraform init for ${{ parameters.service }}
+    inputs:
+      provider: "aws"
+      command: "init"
+      commandOptions: '-var-file environments/${{ parameters.environment }}.tfvars -var="environment=${{ parameters.environment }}" -var="app_version=${{ parameters.version }}"'
+      workingDirectory: "$(Agent.BuildDirectory)/${{ parameters.service }}-deploy-config/${{ parameters.service }}-infra"
+      backendServiceAWS: "${{ parameters.service_connection.terraform.name }}"
+      backendAWSBucketName: "${{ parameters.service_connection.terraform.bucket }}"
+      backendAWSKey: "${{ parameters.environment_type }}/${{ parameters.environment }}/application/${{ parameters.service }}-infra/terraform.tfstate"
+
+  - task: TerraformTaskV3@3
+    displayName: terraform plan for ${{ parameters.service }}
+    inputs:
+      provider: "aws"
+      command: "plan"
+      commandOptions: '-var-file environments/${{ parameters.environment }}.tfvars -var="environment=${{ parameters.environment }}" -var="app_version=${{ parameters.version }}"'
+      workingDirectory: "$(Agent.BuildDirectory)/${{ parameters.service }}-deploy-config/${{ parameters.service }}-infra"
+      environmentServiceNameAWS: "${{ parameters.service_connection.terraform.name }}"
+
+  - task: TerraformTaskV3@3
+    displayName: terraform apply for ${{ parameters.service }}
+    inputs:
+      provider: "aws"
+      command: "apply"
+      commandOptions: '-var-file environments/${{ parameters.environment }}.tfvars -var="environment=${{ parameters.environment }}" -var="app_version=${{ parameters.version }}"'
+      workingDirectory: "$(Agent.BuildDirectory)/${{ parameters.service }}-deploy-config/${{ parameters.service }}-infra"
+      environmentServiceNameAWS: "${{ parameters.service_connection.terraform.name }}"
+
+  - task: AWSShellScript@1
+    inputs:
+      awsCredentials: ${{ parameters.service_connection.aws.credentials }}
+      regionName: ${{ parameters.service_connection.aws.region }}
+      scriptType: "inline"
+      inlineScript: "aws ecs wait services-stable --cluster ${{ parameters.environment }}-${{ parameters.system }} --services ${{ parameters.system }}-${{ parameters.service }}"
+    displayName: Waiting For Deploy ${{ parameters.system }}-${{ parameters.service }} service until stabled
+    continueOnError: true
+
+  - task: AWSShellScript@1
+    inputs:
+      awsCredentials: ${{ parameters.service_connection.aws.credentials }}
+      regionName: ${{ parameters.service_connection.aws.region }}
+      scriptType: "inline"
+      inlineScript: "aws ecs wait services-stable --cluster ${{ parameters.environment }}-${{ parameters.system }} --services ${{ parameters.system }}-${{ parameters.service }}"
+    displayName: Waiting For Deploy ${{ parameters.system }}-${{ parameters.service }} service until stabled
